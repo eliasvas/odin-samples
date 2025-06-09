@@ -1,0 +1,3 @@
+[submodule "perfaware/ce_ref"]
+	path = perfaware/ce_ref
+	url = https://github.com/cmuratori/computer_enhance
