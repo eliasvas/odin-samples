@@ -2,6 +2,7 @@ package sim86
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 
 main :: proc() {
   asm_path := os.args[1]
@@ -10,8 +11,10 @@ main :: proc() {
       fmt.println("Could not read file: ", asm_path)
       return
   } else {
-    fmt.println("Data read from: ", asm_path)
-    fmt.println(string(data))
+    fmt.println(";", asm_path, ":")
+    sim86_decode(string(data))
+    //fmt.println("bits 16")
+    //fmt.println("mov ax,bx")
   }
   defer delete(data, context.allocator)
 }

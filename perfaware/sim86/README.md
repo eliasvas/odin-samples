@@ -11,7 +11,6 @@ cd perfaware_hw/sim86
 mkdir build
 pushd build
 odin build .. -out:sim86
-./sim86 ../../ce_ref/perfaware/part1/listing_0037_single_register_mov.asm
-diff my_disasm ../../perfaware_ref/perfaware/part1/listing_0037_single_register_mov
+../sim86_test.sh ../../ce_ref/perfaware/part1/listing_0037_single_register_mov
 popd
 ```
