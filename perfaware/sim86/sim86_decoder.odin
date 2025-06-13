@@ -34,6 +34,11 @@ calc_reg_name :: proc(reg : u8, w : bool) -> Sim86_Register_Name {
 
 calc_effective_address :: proc(rm : u8, mod : u8, w : bool, disp : u32) ->string {
 
+  // signed displacement shenanigans
+  sdisp : i16 = transmute(i16)u16(disp & 0xFFFF)
+  if mod != 0b10 do sdisp = cast(i16)transmute(i8)u8(disp & 0xFF)
+  str_disp := (sdisp >= 0) ? fmt.tprint("+",abs(sdisp)) : fmt.tprint("-",abs(sdisp))
+
   switch mod {
     case 0b11:
       return fmt.tprint(calc_reg_name(rm, w))
@@ -44,22 +49,22 @@ calc_effective_address :: proc(rm : u8, mod : u8, w : bool, disp : u32) ->string
     case 0b10:
       switch rm {
       case 0b000:
-        return (disp > 0) ? fmt.tprint("bx + si +", disp) : fmt.tprint("bx + si")
+        return (disp != 0) ? fmt.tprint("bx + si", str_disp) : fmt.tprint("bx + si")
       case 0b001:
-        return (disp > 0) ? fmt.tprint("bx + di +", disp) : fmt.tprint("bx + di")
+        return (disp != 0) ? fmt.tprint("bx + di", str_disp) : fmt.tprint("bx + di")
       case 0b010:
-        return (disp > 0) ? fmt.tprint("bp + si +", disp) : fmt.tprint("bp + si")
+        return (disp != 0) ? fmt.tprint("bp + si", str_disp) : fmt.tprint("bp + si")
       case 0b011:
-        return (disp > 0) ? fmt.tprint("bp + di +", disp) : fmt.tprint("bp + di")
+        return (disp != 0) ? fmt.tprint("bp + di", str_disp) : fmt.tprint("bp + di")
       case 0b100:
-        return (disp > 0) ? fmt.tprint("si +", disp) : fmt.tprint("si")
+        return (disp != 0) ? fmt.tprint("si", str_disp) : fmt.tprint("si")
       case 0b101:
-        return (disp > 0) ? fmt.tprint("di +", disp) : fmt.tprint("di")
+        return (disp != 0) ? fmt.tprint("di", str_disp) : fmt.tprint("di")
       case 0b110:
         if mod == 0b00 do return fmt.tprint(disp) // for special IMMEDIATE ADDRESS CASE per the 8086 manual
-        return (disp > 0) ? fmt.tprint("bp +", disp) : fmt.tprint("bp")
+        return (disp != 0) ? fmt.tprint("bp", str_disp) : fmt.tprint("bp")
       case 0b111:
-        return (disp > 0) ? fmt.tprint("bx +", disp) : fmt.tprint("bx")
+        return (disp != 0) ? fmt.tprint("bx", str_disp) : fmt.tprint("bx")
       }
     case:
   }
@@ -103,7 +108,62 @@ decode_accumulator_to_memory_mov_op :: proc(byte1 : u8, reader : ^strings.Reader
   return fmt.tprintf("mov [%d],%s", addr, reg_name)
 }
 
+decode_immediate_to_register_memory_mov_op :: proc(byte1 : u8, reader : ^strings.Reader) -> string {
+  W := bool((byte1 >> 0) & 0b1) // Wide (TM)
+  byte2,_ := strings.reader_read_byte(reader)
+  mod := u8((byte2 >> 6) & 0b11) // Mode
+  rm  := u8((byte2 >> 0) & 0b111) // R/M
 
+  operand1 : string
+
+  // Depending on the mode find the second operand
+  switch mod {
+    case 0b11: // Register Mode (no displacement) (R/M is second register)
+      disp := u32(0)
+      operand1 = calc_effective_address(rm, mod, W, disp)
+    case 0b00: // Memory Mode (no displacement) + if R/M == 110 then 16-bit disp. (R/M indicates effective address calculaction)
+      disp := u32(0)
+      if rm == 0b110 { // special case, if rm is 110 then we got 2 byte immediate disp
+        disp1,_ := strings.reader_read_byte(reader)
+        disp2,_ := strings.reader_read_byte(reader)
+        disp = (u32(disp2) << 8) | u32(disp1)
+      }
+      operand1 = calc_effective_address(rm, mod, W, disp)
+      operand1 = fmt.tprintf("[%s]",operand1)
+    case 0b01: // Memory Mode (8-bit displacement follows) (R/M indicates effective address calculaction)
+      disp1,_ := strings.reader_read_byte(reader)
+      disp := u32(disp1)
+      operand1 = calc_effective_address(rm, mod, W, disp)
+      operand1 = fmt.tprintf("[%s]",operand1)
+    case 0b10: // Memory Mode (16-bit displacement follows) (R/M indicates effective address calculaction)
+      disp1,_ := strings.reader_read_byte(reader)
+      disp2,_ := strings.reader_read_byte(reader)
+      disp := (u32(disp2) << 8) | u32(disp1)
+      operand1 = calc_effective_address(rm, mod, W, disp)
+      operand1 = fmt.tprintf("[%s]",operand1)
+    case:
+  }
+
+
+  data : u32
+  if W {
+      data1,_ := strings.reader_read_byte(reader)
+      data2,_ := strings.reader_read_byte(reader)
+      data = (u32(data2) << 8) | u32(data1)
+  } else {
+      data1,_ := strings.reader_read_byte(reader)
+      data = u32(data1)
+  }
+  operand2 := fmt.tprint(data)
+
+
+
+  if W {
+    return fmt.tprintf("mov %s, word %s", operand1, operand2)
+  } else {
+    return fmt.tprintf("mov %s, byte %s", operand1, operand2)
+  }
+}
 
 decode_register_mem_mov_op :: proc(byte1 : u8, reader : ^strings.Reader) -> string {
   W := bool((byte1 >> 0) & 0b1) // Wide (TM)
@@ -165,6 +225,8 @@ sim86_decode :: proc(data : string) {
       cmd = decode_memory_to_accumulator_mov_op(byte1, &reader)
     } else if (byte1 >> 1) & 0b1111111 == 0b1010001 {
       cmd = decode_accumulator_to_memory_mov_op(byte1, &reader)
+    } else if (byte1 >> 1) & 0b1111111 == 0b1100011 {
+      cmd = decode_immediate_to_register_memory_mov_op(byte1, &reader)
     }
 
     fmt.println(cmd)
