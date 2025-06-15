@@ -3,6 +3,13 @@ package sim86
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:c"
+
+Program :: struct {
+  memory_base : ^u8,
+  count : u8,
+  itr : u8,
+}
 
 main :: proc() {
   asm_path := os.args[1]
@@ -12,9 +19,7 @@ main :: proc() {
       return
   } else {
     fmt.println(";", asm_path, ":")
-    sim86_decode(string(data))
-    //fmt.println("bits 16")
-    //fmt.println("mov ax,bx")
+    sim86_decode(data)
   }
   defer delete(data, context.allocator)
 }
